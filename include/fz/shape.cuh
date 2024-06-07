@@ -1,19 +1,18 @@
 #ifndef __FZ_SHAPE_CUH__
 #define __FZ_SHAPE_CUH__
 
+#include "fz/common.cuh"
+
 namespace fz::cuda {
-
-using SizeType = std::size_t;
-
-#define FZ_CUDA_DUAL __host__ __device__
 
 /**
  * @brief A fixed shape class with compile-time size.
  *
  * @tparam X
  */
-template <SizeType... X> class FixedShape {
-public:
+template <SizeType... X>
+class FixedShape {
+ public:
   FZ_CUDA_DUAL FixedShape() {}
 
   FZ_CUDA_DUAL static constexpr auto size() -> SizeType { return sizeof...(X); }
@@ -22,11 +21,13 @@ public:
     return (X * ...);
   }
 
-  template <SizeType I> FZ_CUDA_DUAL static constexpr auto get() -> SizeType {
+  template <SizeType I>
+  FZ_CUDA_DUAL static constexpr auto get() -> SizeType {
     return get(I);
   }
 
-  template <SizeType I> FZ_CUDA_DUAL static constexpr auto stride() -> SizeType {
+  template <SizeType I>
+  FZ_CUDA_DUAL static constexpr auto stride() -> SizeType {
     return stride(I);
   }
 
@@ -42,10 +43,10 @@ public:
     }
   }
 
-private:
+ private:
   constexpr static SizeType _data[size()] = {X...};
 };
 
-} // namespace fz::cuda
+}  // namespace fz::cuda
 
-#endif // __FZ_SHAPE_CUH__
+#endif  // __FZ_SHAPE_CUH__

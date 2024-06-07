@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "fz/common.cuh"
+
 namespace fz::cuda {
 
 /**
@@ -22,6 +24,10 @@ class Array {
   FZ_CUDA_DUAL Array(std::initializer_list<T> list) {
     SizeType i = 0;
     for (auto &item : list) {
+      if (size() <= i) {
+        break;
+      }
+
       _data[i++] = item;
     }
   }
@@ -92,9 +98,17 @@ class Array {
 
   FZ_CUDA_DUAL auto end() -> T * { return _data + size(); }
 
+  FZ_CUDA_DUAL auto begin() const -> const T * { return _data; }
+
+  FZ_CUDA_DUAL auto end() const -> const T * { return _data + size(); }
+
   FZ_CUDA_DUAL auto cbegin() const -> const T * { return _data; }
 
   FZ_CUDA_DUAL auto cend() const -> const T * { return _data + size(); }
+
+  FZ_CUDA_DUAL auto data() const -> const T * { return _data; }
+
+  FZ_CUDA_DUAL auto data() -> T * { return _data; }
 
  private:
   T _data[S] = {};
