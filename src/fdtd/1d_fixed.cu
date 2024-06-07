@@ -1,76 +1,130 @@
-#include "ffz/array.cuh"
+#include <chrono>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 
-using ffz::cuda::Array;
-using ffz::cuda::ArrayHD;
+#include "fz/array.cuh"
+
+using fz::cuda::Array;
+using fz::cuda::ArrayHD;
 using Size = std::size_t;
 using Real = float;
 
 constexpr Real c_0 = 3e8;
-constexpr Size num_cells = 200;
-constexpr Size num_time_steps = 1000;
+constexpr Size num_cells = 100;
+constexpr Size num_time_steps = 500;
 constexpr Real dz = 0.01;
 constexpr Real cfl = 1.0;
 constexpr Real dt = cfl * dz / c_0;
-constexpr Size tfsf_start = 90;
-constexpr Size tfsf_end = 160;
-constexpr Size reflect_record_index = 85;
-constexpr Size transmit_record_index = 165;
+constexpr Size tfsf_start = 50;
+constexpr Size reflect_record_index = 45;
+constexpr Size transmit_record_index = 75;
+constexpr Size gif_step = 2;
 
-template <typename T, std::size_t TimeSteps, std::size_t NumCells>
-__global__ void
-fdtd1DFixedKernel(Array<T, NumCells + 1> *ex, Array<T, NumCells> *hy,
-                  Array<T, NumCells + 1> *cexe, Array<T, NumCells + 1> *cexhy,
-                  Array<T, NumCells> *chyh, Array<T, NumCells> *chye,
-                  Array<T, TimeSteps> *source,
-                  Array<T, TimeSteps> *ex_reflect_monitor,
-                  Array<T, TimeSteps> *ex_transmit_monitor,
-                  Array<T, TimeSteps *(NumCells + 1)> *ex_line_monitor) {
+constexpr Real l_min = 20 * dz;
+constexpr Real eps_0 = 8.854e-12;
+constexpr Real mu_0 = 4 * M_PI * 1e-7;
+constexpr Real sigma_e_zero = 1e-15;
+constexpr Real sigma_m_zero = 1e-15;
+constexpr Size slab_start = 60;
+// constexpr Size slab_end = 100;
+
+template <typename T, std::size_t TimeSteps, std::size_t NumCells, Size GifStep>
+__global__ void fdtd1DFixedKernel(
+    Array<T, NumCells + 1> *ex, Array<T, NumCells> *hy,
+    Array<T, NumCells + 1> *cexe, Array<T, NumCells + 1> *cexhy,
+    Array<T, NumCells> *chyh, Array<T, NumCells> *chye,
+    Array<T, TimeSteps> *source, Array<T, TimeSteps> *ex_reflect_monitor,
+    Array<T, TimeSteps> *ex_transmit_monitor,
+    Array<T, (TimeSteps / GifStep) * (NumCells + 1)> *ex_line_monitor) {
   // Absorbing boundary condition
   constexpr auto abc_coeff_0 = (c_0 * dt - dz) / (c_0 * dt + dz);
   constexpr auto abc_coeff_1 = 2 * dz / (c_0 * dt + dz);
-  Real abc_x = 0;
-  Real abc_y = 0;
+  constexpr auto abc_coeff_2 =
+      (0.5 * c_0 * dt - dz) / (0.5 * c_0 * dt + dz);  // slab epsilon_r = 4
+  constexpr auto abc_coeff_3 = 2 * dz / (0.5 * c_0 * dt + dz);
+
   Real abc_a = 0;
   Real abc_b = 0;
+  Real abc_c = 0;
+  Real abc_d = 0;
 
   // (*ex)[tfsf_start]
 
   const auto id = blockIdx.x * blockDim.x + threadIdx.x;
-  const auto total_threads = gridDim.x * blockDim.x;
-  printf("total_threads: %d\n", total_threads);
   if (id == 0) {
     printf("GridDim: %d, BlockDim: %d\n", gridDim.x, blockDim.x);
     printf("NumCells: %lu, NumTimeSteps: %lu\n", NumCells, TimeSteps);
   }
 
-  if (0 <= id && id < NumCells + 1) {
+  if (id < NumCells) {
     struct {
-      T _start;
-      T _end;
+      Size _start;
+      Size _end;
     } task;
 
     task._start = id;
     task._end = id + 1;
+    // printf("Thread: %d, Start: %f, End: %f\n", id, task._start, task._end);
 
     for (Size t = 0; t < TimeSteps; ++t) {
+      Real abc_p = (*ex)[NumCells - 1];
+      Real abc_q = (*ex)[NumCells];
+      Real abc_r = (*ex)[1];
+      Real abc_s = (*ex)[0];
+
+      // Update E
       if (id != 0) {
         for (Size i = task._start; i < task._end; ++i) {
           (*ex)[i] =
               (*cexe)[i] * (*ex)[i] + (*cexhy)[i] * ((*hy)[i] - (*hy)[i - 1]);
         }
       }
-      if (id == tfsf_start) {
-        (*ex)[tfsf_start] += (*cexhy)[tfsf_start] * (*source)[t];
+
+      __syncthreads();
+
+      if (id == 0) {
+        // absorbing boundary condition
+        (*ex)[0] = -abc_c + abc_coeff_0 * ((*ex)[1] + abc_d) +
+                   abc_coeff_1 * (abc_r + abc_s);
+        (*ex)[NumCells] = -abc_a + abc_coeff_2 * ((*ex)[NumCells - 1] + abc_b) +
+                          abc_coeff_3 * (abc_p + abc_q);
+        abc_a = abc_p;
+        abc_b = abc_q;
+        abc_c = abc_r;
+        abc_d = abc_s;
+
+        // TF/SF
+        Real coeff_e = dt / (dz * 8.854e-12);
+        Real h_i = (*source)[t] / (377.0);
+
+        (*ex)[tfsf_start] += coeff_e * h_i;
       }
 
-      for (Size i = tfsf_start; i < tfsf_end; ++i) {
+      __syncthreads();
+
+      // Update H
+      for (Size i = task._start; i < task._end; ++i) {
         (*hy)[i] =
             (*chyh)[i] * (*hy)[i] + (*chye)[i] * ((*ex)[i + 1] - (*ex)[i]);
       }
 
-      for (Size i = tfsf_start; i < tfsf_end; ++i) {
-        (*ex_line_monitor)[t * (NumCells + 1) + i] = (*ex)[i];
+      __syncthreads();
+
+      if (id == 0) {
+        // TF/SF
+        Real coeff_h = dt / (dz * 4 * 3.141593 * 1e-7);
+        Real e_i = (*source)[t];
+
+        (*hy)[tfsf_start - 1] += coeff_h * e_i;
+      }
+
+      __syncthreads();
+      if (t % GifStep == 0) {
+        auto k = t / GifStep;
+        for (Size i = 0; i < NumCells + 1; ++i) {
+          (*ex_line_monitor)[k * (NumCells + 1) + i] = (*ex)[i];
+        }
       }
 
       if (id == reflect_record_index) {
@@ -91,16 +145,6 @@ fdtd1DFixedKernel(Array<T, NumCells + 1> *ex, Array<T, NumCells> *hy,
 };
 
 auto fdtd1DFixed() -> void {
-
-  constexpr Real l_min = 20 * dz;
-  constexpr Real f_max = c_0 / (l_min);
-  constexpr Real eps_0 = 8.854e-12;
-  constexpr Real mu_0 = 4 * M_PI * 1e-7;
-  constexpr Real sigma_e_zero = 1e-15;
-  constexpr Real sigma_m_zero = 1e-15;
-  constexpr Size slab_start = 100;
-  constexpr Size slab_end = 150;
-
   auto ex_hd = ArrayHD<Real, num_cells + 1>();
   auto hy_hd = ArrayHD<Real, num_cells>();
   ex_hd.allocateHost();
@@ -142,10 +186,12 @@ auto fdtd1DFixed() -> void {
     sigma_m[i] = sigma_m_zero;
   }
   // fill slab
-  for (Size i = slab_start; i < slab_end + 1; ++i) {
+  for (Size i = slab_start; i < num_cells + 1; ++i) {
     eps[i] = slab_eps_r * eps_0;
-    mu[i] = slab_mu_r * mu_0;
     sigma_e[i] = sigma_e_zero;
+  }
+  for (Size i = slab_start; i < num_cells; ++i) {
+    mu[i] = slab_mu_r * mu_0;
     sigma_m[i] = sigma_m_zero;
   }
 
@@ -183,7 +229,7 @@ auto fdtd1DFixed() -> void {
   auto &source = *source_hd.host();
 
   // initialize source
-  auto source_func = [l_min](const Real t) {
+  auto source_func = [](const Real t) {
     constexpr Real tau = l_min / 6e8;
     constexpr Real t_0 = 4.5 * tau;
     return std::exp(-std::pow((t - t_0) / tau, 2));
@@ -196,7 +242,9 @@ auto fdtd1DFixed() -> void {
   // record
   auto ex_reflect_monitor_hd = ArrayHD<Real, num_time_steps>();
   auto ex_transmit_monitor_hd = ArrayHD<Real, num_time_steps>();
-  auto ex_line_monitor_hd = ArrayHD<Real, num_time_steps *(num_cells + 1)>();
+
+  auto ex_line_monitor_hd =
+      ArrayHD<Real, (num_time_steps / gif_step) * (num_cells + 1)>();
   ex_reflect_monitor_hd.allocateHost();
   ex_transmit_monitor_hd.allocateHost();
   ex_line_monitor_hd.allocateHost();
@@ -209,7 +257,7 @@ auto fdtd1DFixed() -> void {
     ex_reflect_monitor[i] = 0.0;
     ex_transmit_monitor[i] = 0.0;
   }
-  for (Size i = 0; i < num_time_steps * (num_cells + 1); ++i) {
+  for (Size i = 0; i < (num_time_steps / gif_step) * (num_cells + 1); ++i) {
     ex_line_monitor[i] = 0.0;
   }
   ex_reflect_monitor_hd.copyHostToDevice();
@@ -217,27 +265,69 @@ auto fdtd1DFixed() -> void {
   ex_line_monitor_hd.copyHostToDevice();
 
   // kernel
-  constexpr Size block_size = 256;
+  constexpr Size block_size = 128;
   const Size num_blocks = (num_cells + block_size - 1) / block_size;
   printf("Kenel launch: num_blocks: %zu, block_size: %zu\n", num_blocks,
          block_size);
-  fdtd1DFixedKernel<Real, num_time_steps, num_cells>
+  fdtd1DFixedKernel<Real, num_time_steps, num_cells, gif_step>
       <<<num_blocks, block_size>>>(
           ex_hd.device(), hy_hd.device(), cexe_hd.device(), cexhy_hd.device(),
           chyh_hd.device(), chye_hd.device(), source_hd.device(),
           ex_reflect_monitor_hd.device(), ex_transmit_monitor_hd.device(),
           ex_line_monitor_hd.device());
+  cudaDeviceSynchronize();
 
   // copy back
-  printf("Copy back\n");
+  printf("Kernel finished\n");
   ex_hd.copyDeviceToHost();
   hy_hd.copyDeviceToHost();
   ex_reflect_monitor_hd.copyDeviceToHost();
   ex_transmit_monitor_hd.copyDeviceToHost();
   ex_line_monitor_hd.copyDeviceToHost();
+
+  // output
+  printf("Output\n");
+  std::filesystem::path dir("tmp");
+  if (!std::filesystem::exists(dir)) {
+    std::filesystem::create_directory(dir);
+  }
+  printf("Output Directory: %s\n", dir.c_str());
+
+  std::fstream file((dir / "ex_line_monitor.dat").string(), std::ios::out);
+  for (Size t = 0; t < (num_time_steps / gif_step); ++t) {
+    for (Size i = 0; i < num_cells + 1; ++i) {
+      file << ex_line_monitor[t * (num_cells + 1) + i] << " ";
+    }
+    file << "\n";
+  }
+  auto output_func = [](const auto &data, const auto filename) {
+    std::fstream file(filename, std::ios::out);
+    for (Size i = 0; i < data.size(); ++i) {
+      file << data[i] << "\n";
+    }
+    file.close();
+  };
+
+  output_func(ex_reflect_monitor, (dir / "ex_reflect_monitor.dat").string());
+  output_func(ex_transmit_monitor, (dir / "ex_transmit_monitor.dat").string());
+  output_func(source, (dir / "incident_wave.dat").string());
+  auto time = Array<Real, num_time_steps>();
+  for (Size i = 0; i < num_time_steps; ++i) {
+    time[i] = i * dt;
+  }
+  output_func(time, (dir / "time.dat").string());
+
+  printf("Finished\n");
 }
 
 int main() {
+  std::chrono::high_resolution_clock::time_point start_time =
+      std::chrono::high_resolution_clock::now();
   fdtd1DFixed();
+  std::chrono::high_resolution_clock::time_point end_time =
+      std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+      end_time - start_time);
+  printf("Duration: %ld ms\n", duration.count());
   return 0;
 }

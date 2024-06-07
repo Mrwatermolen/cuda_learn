@@ -1,9 +1,9 @@
 #include <cstdio>
-#include <ffz/fixed_vector.cuh>
+#include <fz/fixed_vector.cuh>
 #include <iostream>
 
 __device__ void testArray() {
-  ffz::cuda::FixedVector<float, ffz::cuda::FixedShape<2, 3, 4>> a;
+  fz::cuda::FixedVector<float, fz::cuda::FixedShape<2, 3, 4>> a;
 
   // array info
   printf("==========Array Basic Info==========\n");

@@ -1,7 +1,7 @@
-#ifndef __FFZ_SHAPE_CUH__
-#define __FFZ_SHAPE_CUH__
+#ifndef __FZ_SHAPE_CUH__
+#define __FZ_SHAPE_CUH__
 
-namespace ffz::cuda {
+namespace fz::cuda {
 
 using SizeType = std::size_t;
 
@@ -46,6 +46,6 @@ private:
   constexpr static SizeType _data[size()] = {X...};
 };
 
-} // namespace ffz::cuda
+} // namespace fz::cuda
 
-#endif // __FFZ_SHAPE_CUH__
+#endif // __FZ_SHAPE_CUH__

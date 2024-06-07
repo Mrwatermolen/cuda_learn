@@ -1,8 +1,8 @@
-#include <ffz/array.cuh>
+#include <fz/array.cuh>
 #include <iostream>
 
 __device__ void testShape() {
-  auto shape = ffz::cuda::FixedShape<2, 3, 4>{};
+  auto shape = fz::cuda::FixedShape<2, 3, 4>{};
 
   printf("Size: %lu\n", shape.size());
   printf("Total size: %lu\n", shape.capacity());

@@ -1,9 +1,8 @@
 #include <cstdio>
-#include <ffz/array.cuh>
+#include <fz/array.cuh>
 
 template <typename T, std::size_t S>
-__global__ void kernelTestArrayHD(ffz::cuda::Array<T, S> *a) {
-
+__global__ void kernelTestArrayHD(fz::cuda::Array<T, S> *a) {
   auto thread_id = threadIdx.x * blockDim.x + threadIdx.y;
 
   if (thread_id == 0) {
@@ -50,7 +49,7 @@ auto testArrayHD() {
 
   printf("Running in the host\n");
 
-  auto hd = ffz::cuda::ArrayHD<float, 8>();
+  auto hd = fz::cuda::ArrayHD<float, 8>();
   hd.allocateHost();
   hd.allocateDevice();
   auto host = hd.host();
@@ -73,7 +72,7 @@ auto testArrayHD() {
   auto block = dim3(2, 2, 1);
   hd.copyHostToDevice();
   kernelTestArrayHD<<<grid, block>>>(device);
-  hd.copyDeviceToHost();
+  cudaDeviceSynchronize();
   printf("\n");
 
   printf("Back to Host\n");
@@ -85,12 +84,21 @@ auto testArrayHD() {
   printf("\n");
   printf("==========End of Host Array Data==========\n");
 
-  printf("=======================END OF TEST ARRAY HOST "
-         "DEVICE=======================\n");
+  printf("Copy Device to Host\n");
+  hd.copyDeviceToHost();
+  printf("==========Host Array Data==========\n");
+  for (const auto &item : *host) {
+    printf("%f ", item);
+  }
+  printf("\n");
+  printf("==========End of Host Array Data==========\n");
+
+  printf(
+      "=======================END OF TEST ARRAY HOST "
+      "DEVICE=======================\n");
 }
 
 int main(int argc, char *argv[]) {
-
   testArrayHD();
 
   return 0;

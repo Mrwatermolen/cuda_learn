@@ -1,9 +1,9 @@
-#ifndef __FFZ_FIXED_VECTOR_CUH__
-#define __FFZ_FIXED_VECTOR_CUH__
+#ifndef __FZ_FIXED_VECTOR_CUH__
+#define __FZ_FIXED_VECTOR_CUH__
 
-#include "ffz/shape.cuh"
+#include "fz/shape.cuh"
 
-namespace ffz::cuda {
+namespace fz::cuda {
 
 /**
  * @brief FixedVector is a fixed size vector with fixed shape and stride
@@ -138,6 +138,6 @@ private:
   }
 };
 
-} // namespace ffz::cuda
+} // namespace fz::cuda
 
-#endif // __FFZ_FIXED_VECTOR_CUH__
+#endif // __FZ_FIXED_VECTOR_CUH__

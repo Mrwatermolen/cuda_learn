@@ -1,11 +1,12 @@
-#ifndef __FFZ_ARRAY_CUH__
-#define __FFZ_ARRAY_CUH__
+#ifndef __FZ_ARRAY_CUH__
+#define __FZ_ARRAY_CUH__
 
-#include <ffz/shape.cuh>
+#include <fz/shape.cuh>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
-namespace ffz::cuda {
+namespace fz::cuda {
 
 /**
  * @brief Same as std::array
@@ -13,8 +14,9 @@ namespace ffz::cuda {
  * @tparam T
  * @tparam S
  */
-template <typename T, SizeType S> class Array {
-public:
+template <typename T, SizeType S>
+class Array {
+ public:
   FZ_CUDA_DUAL Array() {}
 
   FZ_CUDA_DUAL Array(std::initializer_list<T> list) {
@@ -70,12 +72,27 @@ public:
 
   FZ_CUDA_DUAL auto cend() const -> const T * { return _data + size(); }
 
-private:
+ private:
   T _data[S] = {};
 };
 
-template <typename T, SizeType S> class ArrayHD {
-public:
+template <typename T>
+__global__ inline auto __kernelDestroyDeviceObject(T *device) -> void {
+  printf("Destroying device object\n");
+  (*device).~T();
+}
+
+template <typename T>
+inline auto __destroyDeviceObject(T *device) -> void {
+  constexpr auto has_trivial_destructor = std::is_trivially_destructible_v<T>;
+  if constexpr (!has_trivial_destructor) {
+    __kernelDestroyDeviceObject<<<1, 1>>>(device);
+  }
+}
+
+template <typename T, SizeType S>
+class ArrayHD {
+ public:
   using DeviceArray = Array<T, S>;
   using HostArray = Array<T, S>;
 
@@ -83,11 +100,13 @@ public:
 
   ~ArrayHD() {
     if (_device) {
+      __destroyDeviceObject(_device);
       cudaFree(_device);
+      _device = nullptr;
     }
-    if (_host) {
-      delete _host;
-    }
+
+    delete _host;
+    _host = nullptr;
   }
 
   FZ_CUDA_DUAL auto device() -> DeviceArray * { return _device; }
@@ -99,19 +118,23 @@ public:
   auto host() const -> const HostArray * { return _host; }
 
   auto allocateDevice() -> void {
-    if (!_device) {
-      auto err = cudaMalloc(&_device, sizeof(DeviceArray));
-      if (err != cudaSuccess) {
-        throw std::runtime_error("Failed to allocate device memory" +
-                                 std::string(cudaGetErrorString(err)));
-      }
+    if (_device) {
+      throw std::runtime_error("Device memory is already allocated");
+    }
+
+    auto err = cudaMalloc(&_device, sizeof(DeviceArray));
+    if (err != cudaSuccess) {
+      throw std::runtime_error("Failed to allocate device memory" +
+                               std::string(cudaGetErrorString(err)));
     }
   }
 
   auto allocateHost() -> void {
-    if (!_host) {
-      _host = new HostArray();
+    if (_host) {
+      throw std::runtime_error("Host memory is already allocated");
     }
+
+    _host = new HostArray();
   }
 
   auto copyHostToDevice() -> void {
@@ -146,11 +169,12 @@ public:
     }
   }
 
-private:
+ protected:
+ private:
   DeviceArray *_device{};
   HostArray *_host{};
 };
 
-} // namespace ffz::cuda
+}  // namespace fz::cuda
 
-#endif // __FFZ_ARRAY_CUH__
+#endif  // __FZ_ARRAY_CUH__
