@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 
+#include "fdtd_update_scheme.cuh"
 #include "fz/array.cuh"
 
 using fz::cuda::Array;
@@ -23,11 +24,10 @@ constexpr Size gif_step = 2;
 
 constexpr Real l_min = 20 * dz;
 constexpr Real eps_0 = 8.854e-12;
-constexpr Real mu_0 = 4 * M_PI * 1e-7;
+constexpr Real mu_0 = 4 * 3.141593 * 1e-7;
 constexpr Real sigma_e_zero = 1e-15;
 constexpr Real sigma_m_zero = 1e-15;
 constexpr Size slab_start = 60;
-// constexpr Size slab_end = 100;
 
 template <typename T, std::size_t TimeSteps, std::size_t NumCells, Size GifStep>
 __global__ void fdtd1DFixedKernel(
@@ -74,12 +74,9 @@ __global__ void fdtd1DFixedKernel(
       Real abc_s = (*ex)[0];
 
       // Update E
-      if (id != 0) {
-        for (Size i = task._start; i < task._end; ++i) {
-          (*ex)[i] =
-              (*cexe)[i] * (*ex)[i] + (*cexhy)[i] * ((*hy)[i] - (*hy)[i - 1]);
-        }
-      }
+      one_dimensional::updateE(*cexe, *cexhy, *ex, *hy, task._start, task._end);
+
+      one_dimensional::updateELeft(*cexe, *cexhy, *ex, *hy, task._start);
 
       __syncthreads();
 
@@ -104,10 +101,7 @@ __global__ void fdtd1DFixedKernel(
       __syncthreads();
 
       // Update H
-      for (Size i = task._start; i < task._end; ++i) {
-        (*hy)[i] =
-            (*chyh)[i] * (*hy)[i] + (*chye)[i] * ((*ex)[i + 1] - (*ex)[i]);
-      }
+      one_dimensional::updateH(*chyh, *chye, *hy, *ex, task._start, task._end);
 
       __syncthreads();
 
@@ -291,7 +285,7 @@ auto fdtd1DFixed() -> void {
   if (!std::filesystem::exists(dir)) {
     std::filesystem::create_directory(dir);
   }
-  printf("Output Directory: %s\n", dir.c_str());
+  printf("Output Directory: %s\n", (std::filesystem::absolute(dir)).c_str());
 
   std::fstream file((dir / "ex_line_monitor.dat").string(), std::ios::out);
   for (Size t = 0; t < (num_time_steps / gif_step); ++t) {

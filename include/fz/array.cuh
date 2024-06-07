@@ -1,9 +1,9 @@
 #ifndef __FZ_ARRAY_CUH__
 #define __FZ_ARRAY_CUH__
 
+#include <fz/memory.cuh>
 #include <fz/shape.cuh>
 #include <stdexcept>
-#include <type_traits>
 #include <utility>
 
 namespace fz::cuda {
@@ -62,6 +62,30 @@ class Array {
     return _data[index];
   }
 
+  FZ_CUDA_DUAL auto at(SizeType index) -> T & {
+    if (index >= size()) {
+#if defined(__CUDA_ARCH__)
+      printf("Index out of range\n");
+      asm("trap;");
+#else
+      throw std::out_of_range("Index out of range");
+#endif
+    }
+    return _data[index];
+  }
+
+  FZ_CUDA_DUAL auto at(SizeType index) const -> const T & {
+    if (index >= size()) {
+#if defined(__CUDA_ARCH__)
+      printf("Index out of range\n");
+      asm("trap;");
+#else
+      throw std::out_of_range("Index out of range");
+#endif
+    }
+    return _data[index];
+  }
+
   FZ_CUDA_DUAL static constexpr auto size() -> SizeType { return S; }
 
   FZ_CUDA_DUAL auto begin() -> T * { return _data; }
@@ -75,20 +99,6 @@ class Array {
  private:
   T _data[S] = {};
 };
-
-template <typename T>
-__global__ inline auto __kernelDestroyDeviceObject(T *device) -> void {
-  printf("Destroying device object\n");
-  (*device).~T();
-}
-
-template <typename T>
-inline auto __destroyDeviceObject(T *device) -> void {
-  constexpr auto has_trivial_destructor = std::is_trivially_destructible_v<T>;
-  if constexpr (!has_trivial_destructor) {
-    __kernelDestroyDeviceObject<<<1, 1>>>(device);
-  }
-}
 
 template <typename T, SizeType S>
 class ArrayHD {
