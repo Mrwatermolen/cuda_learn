@@ -260,7 +260,7 @@ auto fdtd1DFixed() -> void {
 
   // kernel
   constexpr Size block_size = 128;
-  const Size num_blocks = (num_cells + block_size - 1) / block_size;
+  const Size num_blocks = 1;
   printf("Kenel launch: num_blocks: %zu, block_size: %zu\n", num_blocks,
          block_size);
   fdtd1DFixedKernel<Real, num_time_steps, num_cells, gif_step>

@@ -5,6 +5,7 @@
 #include <fz/array.cuh>
 #include <fz/common.cuh>
 #include <fz/memory.cuh>
+#include <iostream>
 #include <stdexcept>
 
 namespace fz::cuda {
@@ -94,19 +95,19 @@ class Tensor {
   }
 
   template <typename... Args>
-  FZ_CUDA_DUAL auto operator()(Args &&...args) {
+  FZ_CUDA_DUAL auto operator()(Args &&...args) -> T & {
     auto offset = dataOffset(_stride.data(), std::forward<Args>(args)...);
     return _data[offset];
   }
 
   template <typename... Args>
-  FZ_CUDA_DUAL auto operator()(Args &&...args) const {
+  FZ_CUDA_DUAL auto operator()(Args &&...args) const -> const T & {
     auto offset = dataOffset(_stride.data(), std::forward<Args>(args)...);
     return _data[offset];
   }
 
   template <typename... Args>
-  FZ_CUDA_DUAL auto at(Args &&...args) {
+  FZ_CUDA_DUAL auto at(Args &&...args) -> T & {
     auto offset = dataOffset(_stride.data(), std::forward<Args>(args)...);
     if (offset >= size()) {
 #ifdef __CUDA_ARCH__
@@ -121,7 +122,7 @@ class Tensor {
   }
 
   template <typename... Args>
-  FZ_CUDA_DUAL auto at(Args &&...args) const {
+  FZ_CUDA_DUAL auto at(Args &&...args) const -> const T & {
     auto offset = dataOffset(_stride.data(), std::forward<Args>(args)...);
     if (offset >= size()) {
 #ifdef __CUDA_ARCH__
@@ -232,9 +233,26 @@ class TensorHD {
 
   ~TensorHD() {
     if (_device) {
+      // don't call destructor to avoid double free
       // __destroyDeviceObject(_device);
-      cudaFree(_device);
+      {
+        auto err = cudaFree(_device);
+        if (err != cudaSuccess) {
+          std::cerr << "Failed to free device memory \n";
+          std::abort();
+        }
+      }
       _device = nullptr;
+    }
+
+    if (_device_data) {
+      {
+        auto err = cudaFree(_device_data);
+        if (err != cudaSuccess) {
+          std::cerr << "Failed to free device memory \n";
+          std::abort();
+        }
+      }
       _device_data = nullptr;
     }
 

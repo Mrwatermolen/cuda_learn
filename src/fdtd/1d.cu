@@ -28,12 +28,13 @@ constexpr Real sigma_m_zero = 1e-15;
 constexpr Size slab_start = 60;
 
 using Array1D = Tensor<Real, 1>;
+using Array2D = Tensor<Real, 2>;
 
 __global__ void fdtd1DFixedKernel(Array1D *ex, Array1D *hy, Array1D *cexe,
                                   Array1D *cexhy, Array1D *chyh, Array1D *chye,
                                   Array1D *source, Array1D *ex_reflect_monitor,
                                   Array1D *ex_transmit_monitor,
-                                  Array1D *ex_line_monitor,
+                                  Array2D *ex_line_monitor,
                                   std::size_t gif_step) {
   // Absorbing boundary condition
   constexpr auto abc_coeff_0 = (c_0 * dt - dz) / (c_0 * dt + dz);
@@ -47,7 +48,7 @@ __global__ void fdtd1DFixedKernel(Array1D *ex, Array1D *hy, Array1D *cexe,
   Real abc_c = 0;
   Real abc_d = 0;
 
-  const auto id = blockIdx.x * blockDim.x + threadIdx.x;
+  const auto id = threadIdx.x;
   if (id == 0) {
     printf("GridDim: %d, BlockDim: %d\n", gridDim.x, blockDim.x);
     printf("NumCells: %lu, TimeSteps: %lu\n", ex->size() - 1, source->size());
@@ -61,9 +62,18 @@ __global__ void fdtd1DFixedKernel(Array1D *ex, Array1D *hy, Array1D *cexe,
       Size _end;
     } task;
 
-    task._start = id;
-    task._end = id + 1;
-    // printf("Thread: %d, Start: %f, End: %f\n", id, task._start, task._end);
+    // task._start = id;
+    // task._end = id + 1;
+    auto remainder = num_cells % blockDim.x;
+    auto quotient = num_cells / blockDim.x;
+    if (id < remainder) {
+      task._start = id * (quotient + 1);
+      task._end = (id + 1) * (quotient + 1);
+    } else {
+      task._start = id * quotient + remainder;
+      task._end = (id + 1) * quotient + remainder;
+    }
+    // printf("Thread: %d, Start: %lu, End: %lu\n", id, task._start, task._end);
 
     for (Size t = 0; t < time_steps; ++t) {
       Real abc_p = (*ex)[num_cells - 1];
@@ -116,7 +126,7 @@ __global__ void fdtd1DFixedKernel(Array1D *ex, Array1D *hy, Array1D *cexe,
       if (t % gif_step == 0) {
         auto k = t / gif_step;
         for (Size i = 0; i < num_cells + 1; ++i) {
-          (*ex_line_monitor)[k * (num_cells + 1) + i] = (*ex)[i];
+          (*ex_line_monitor)(k, i) = (*ex)[i];
         }
       }
 
@@ -226,7 +236,7 @@ auto fdtd1D(std::size_t num_cells, std::size_t num_time_steps) -> void {
   auto ex_transmit_monitor_hd = TensorHD<Real, 1>({num_time_steps});
   const auto gif_step = 3;
   auto ex_line_monitor_hd =
-      TensorHD<Real, 1>({(num_time_steps / gif_step) * (num_cells + 1)});
+      TensorHD<Real, 2>({(num_time_steps / gif_step), num_cells + 1});
   auto &ex_reflect_monitor = *ex_reflect_monitor_hd.host();
   auto &ex_transmit_monitor = *ex_transmit_monitor_hd.host();
   auto &ex_line_monitor = *ex_line_monitor_hd.host();
@@ -236,16 +246,18 @@ auto fdtd1D(std::size_t num_cells, std::size_t num_time_steps) -> void {
     ex_reflect_monitor[i] = 0.0;
     ex_transmit_monitor[i] = 0.0;
   }
-  for (Size i = 0; i < (num_time_steps / gif_step) * (num_cells + 1); ++i) {
-    ex_line_monitor[i] = 0.0;
+  for (Size i = 0; i < (num_time_steps / gif_step); ++i) {
+    for (Size j = 0; j < num_cells + 1; ++j) {
+      ex_line_monitor(i, j) = 0.0;
+    }
   }
   ex_reflect_monitor_hd.copyHostToDevice();
   ex_transmit_monitor_hd.copyHostToDevice();
   ex_line_monitor_hd.copyHostToDevice();
 
   // kernel
+  constexpr Size num_blocks = 1;  // don't support multi-block
   constexpr Size block_size = 128;
-  const Size num_blocks = (num_cells + block_size - 1) / block_size;
   printf("Kenel launch: num_blocks: %zu, block_size: %zu\n", num_blocks,
          block_size);
   fdtd1DFixedKernel<<<num_blocks, block_size>>>(
@@ -274,7 +286,7 @@ auto fdtd1D(std::size_t num_cells, std::size_t num_time_steps) -> void {
   std::fstream file((dir / "ex_line_monitor.dat").string(), std::ios::out);
   for (Size t = 0; t < (num_time_steps / gif_step); ++t) {
     for (Size i = 0; i < num_cells + 1; ++i) {
-      file << ex_line_monitor.at(t * (num_cells + 1) + i) << " ";
+      file << ex_line_monitor.at(t, i) << " ";
     }
     file << "\n";
   }
@@ -309,7 +321,6 @@ int main(int argc, char *argv[]) {
 
   std::chrono::high_resolution_clock::time_point start_time =
       std::chrono::high_resolution_clock::now();
-  // fdtd1DFixed();
   fdtd1D(num_cells, num_time_steps);
   std::chrono::high_resolution_clock::time_point end_time =
       std::chrono::high_resolution_clock::now();

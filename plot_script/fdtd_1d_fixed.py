@@ -62,10 +62,10 @@ def plot_gpu_fdtd_1d(data_dir: str):
     ax.plot(freq[index]/1e9, reflect_coefficient[index], label='Reflect FDTD')
     ax.plot(freq[index]/1e9, transmit_coefficient[index],
             label='Transmit FDTD')
-    ax.plot(freq[index]/1e9, abs(1 - 2) / 3.0 *
-            np.ones_like(freq[index]), label='Reflect Analytical', marker='o')
-    ax.plot(freq[index]/1e9, 2 / (1 + 2) * np.ones_like(freq[index]),
-            label='Transmit Analytical', marker='*')
+    ax.scatter(freq[index]/1e9, abs(1 - 2) / 3.0 *
+            np.ones_like(freq[index]), label='Reflect Analytical', marker='o', color='red')
+    ax.scatter(freq[index]/1e9, 2 / (1 + 2) * np.ones_like(freq[index]),
+            label='Transmit Analytical', marker='*', color='green')
 
     ax.set_title('Reflect and Transmit Coefficient')
     ax.set_xlabel('Frequency (GHz)')
