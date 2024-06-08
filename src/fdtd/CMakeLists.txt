@@ -7,3 +7,5 @@ if(FZ_FDTD_TEST_INDEX_OUT_OF_RANGE)
 endif()
 
 add_executable(fdtd_1d 1d.cu)
+
+add_executable(fdtd_2d 2d.cu)

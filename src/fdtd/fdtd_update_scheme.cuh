@@ -1,6 +1,7 @@
 #ifndef __CUDA_LEARN_FDTD_UPDATE_SCHEME_H__
 #define __CUDA_LEARN_FDTD_UPDATE_SCHEME_H__
 
+#include "fz/common.cuh"
 #define FDTD_UPDATE_SCHEME_CUDA_DUAL __host__ __device__
 
 namespace one_dimensional {
@@ -56,5 +57,49 @@ FDTD_UPDATE_SCHEME_CUDA_DUAL inline auto updateH(const T& ch2h, const T& ce2h,
 }
 
 }  // namespace one_dimensional
+
+namespace utl {
+
+enum class Axis { X, Y, Z };
+
+enum class Direction { Forward, Backward };
+
+enum class Field { E, H };
+
+FZ_CUDA_DUAL inline constexpr auto axisA(Axis c) {
+  // a cross b = c
+  switch (c) {
+    case Axis::X:
+      return Axis::Y;
+    case Axis::Y:
+      return Axis::Z;
+    case Axis::Z:
+      return Axis::X;
+  }
+}
+
+FZ_CUDA_DUAL inline constexpr auto axisB(Axis c) {
+  // a cross b = c
+  switch (c) {
+    case Axis::X:
+      return Axis::Z;
+    case Axis::Y:
+      return Axis::X;
+    case Axis::Z:
+      return Axis::Y;
+  }
+}
+
+FZ_CUDA_DUAL inline constexpr auto oppositeDirection(Direction d) {
+  return d == Direction::Forward ? Direction::Backward : Direction::Forward;
+}
+
+FZ_CUDA_DUAL inline constexpr auto dualField(Field f) {
+  return f == Field::E ? Field::H : Field::E;
+}
+
+}  // namespace utl
+
+namespace two_dimensional {}
 
 #endif  // __CUDA_LEARN_FDTD_UPDATE_SCHEME_H__
