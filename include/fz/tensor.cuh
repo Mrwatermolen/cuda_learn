@@ -318,10 +318,8 @@ class TensorHD {
       throw std::runtime_error("Device memory is not allocated");
     }
 
-    auto new_host = new HostTensor();
-
     {
-      auto err = cudaMemcpy(new_host, _device, sizeof(DeviceTensor),
+      auto err = cudaMemcpy(_host, _device, sizeof(DeviceTensor),
                             cudaMemcpyDeviceToHost);
       if (err != cudaSuccess) {
         throw std::runtime_error("Failed to copy to host memory" +
@@ -329,21 +327,44 @@ class TensorHD {
       }
     }
 
-    assert(_device_data == new_host->_data);
-    new_host->_data = new T[new_host->size()];
+    assert(_device_data == _host->_data);
+    _host->_data = new T[_host->size()];
 
     {
-      auto err =
-          cudaMemcpy(new_host->_data, _device_data,
-                     new_host->size() * sizeof(T), cudaMemcpyDeviceToHost);
+      auto err = cudaMemcpy(_host->_data, _device_data,
+                            _host->size() * sizeof(T), cudaMemcpyDeviceToHost);
       if (err != cudaSuccess) {
         throw std::runtime_error("Failed to copy data to host memory" +
                                  std::string(cudaGetErrorString(err)));
       }
     }
 
-    delete _host;
-    _host = new_host;
+    // auto new_host = new HostTensor();
+
+    // {
+    //   auto err = cudaMemcpy(new_host, _device, sizeof(DeviceTensor),
+    //                         cudaMemcpyDeviceToHost);
+    //   if (err != cudaSuccess) {
+    //     throw std::runtime_error("Failed to copy to host memory" +
+    //                              std::string(cudaGetErrorString(err)));
+    //   }
+    // }
+
+    // assert(_device_data == new_host->_data);
+    // new_host->_data = new T[new_host->size()];
+
+    // {
+    //   auto err =
+    //       cudaMemcpy(new_host->_data, _device_data,
+    //                  new_host->size() * sizeof(T), cudaMemcpyDeviceToHost);
+    //   if (err != cudaSuccess) {
+    //     throw std::runtime_error("Failed to copy data to host memory" +
+    //                              std::string(cudaGetErrorString(err)));
+    //   }
+    // }
+
+    // delete _host;
+    // _host = new_host;
   }
 
  protected:

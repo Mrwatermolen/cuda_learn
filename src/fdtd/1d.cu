@@ -5,10 +5,10 @@
 #include <fstream>
 
 #include "fdtd_update_scheme.cuh"
-#include "fz/array.cuh"
+#include "fz/tensor.cuh"
 
-using fz::cuda::Array;
-using fz::cuda::ArrayHD;
+using fz::cuda::Tensor;
+using fz::cuda::TensorHD;
 using Size = std::size_t;
 using Real = float;
 
@@ -19,7 +19,6 @@ constexpr Real dt = cfl * dz / c_0;
 constexpr Size tfsf_start = 50;
 constexpr Size reflect_record_index = 45;
 constexpr Size transmit_record_index = 75;
-constexpr Size gif_step = 2;
 
 constexpr Real l_min = 20 * dz;
 constexpr Real eps_0 = 8.854e-12;
@@ -28,14 +27,14 @@ constexpr Real sigma_e_zero = 1e-15;
 constexpr Real sigma_m_zero = 1e-15;
 constexpr Size slab_start = 60;
 
-template <typename T, std::size_t TimeSteps, std::size_t NumCells, Size GifStep>
-__global__ void fdtd1DFixedKernel(
-    Array<T, NumCells + 1> *ex, Array<T, NumCells> *hy,
-    Array<T, NumCells + 1> *cexe, Array<T, NumCells + 1> *cexhy,
-    Array<T, NumCells> *chyh, Array<T, NumCells> *chye,
-    Array<T, TimeSteps> *source, Array<T, TimeSteps> *ex_reflect_monitor,
-    Array<T, TimeSteps> *ex_transmit_monitor,
-    Array<T, (TimeSteps / GifStep) * (NumCells + 1)> *ex_line_monitor) {
+using Array1D = Tensor<Real, 1>;
+
+__global__ void fdtd1DFixedKernel(Array1D *ex, Array1D *hy, Array1D *cexe,
+                                  Array1D *cexhy, Array1D *chyh, Array1D *chye,
+                                  Array1D *source, Array1D *ex_reflect_monitor,
+                                  Array1D *ex_transmit_monitor,
+                                  Array1D *ex_line_monitor,
+                                  std::size_t gif_step) {
   // Absorbing boundary condition
   constexpr auto abc_coeff_0 = (c_0 * dt - dz) / (c_0 * dt + dz);
   constexpr auto abc_coeff_1 = 2 * dz / (c_0 * dt + dz);
@@ -48,15 +47,15 @@ __global__ void fdtd1DFixedKernel(
   Real abc_c = 0;
   Real abc_d = 0;
 
-  // (*ex)[tfsf_start]
-
   const auto id = blockIdx.x * blockDim.x + threadIdx.x;
   if (id == 0) {
     printf("GridDim: %d, BlockDim: %d\n", gridDim.x, blockDim.x);
-    printf("NumCells: %lu, NumTimeSteps: %lu\n", NumCells, TimeSteps);
+    printf("NumCells: %lu, TimeSteps: %lu\n", ex->size() - 1, source->size());
   }
+  const auto num_cells = ex->size() - 1;
+  const auto time_steps = source->size();
 
-  if (id < NumCells) {
+  if (id < num_cells) {
     struct {
       Size _start;
       Size _end;
@@ -66,9 +65,9 @@ __global__ void fdtd1DFixedKernel(
     task._end = id + 1;
     // printf("Thread: %d, Start: %f, End: %f\n", id, task._start, task._end);
 
-    for (Size t = 0; t < TimeSteps; ++t) {
-      Real abc_p = (*ex)[NumCells - 1];
-      Real abc_q = (*ex)[NumCells];
+    for (Size t = 0; t < time_steps; ++t) {
+      Real abc_p = (*ex)[num_cells - 1];
+      Real abc_q = (*ex)[num_cells];
       Real abc_r = (*ex)[1];
       Real abc_s = (*ex)[0];
 
@@ -83,8 +82,9 @@ __global__ void fdtd1DFixedKernel(
         // absorbing boundary condition
         (*ex)[0] = -abc_c + abc_coeff_0 * ((*ex)[1] + abc_d) +
                    abc_coeff_1 * (abc_r + abc_s);
-        (*ex)[NumCells] = -abc_a + abc_coeff_2 * ((*ex)[NumCells - 1] + abc_b) +
-                          abc_coeff_3 * (abc_p + abc_q);
+        (*ex)[num_cells] = -abc_a +
+                           abc_coeff_2 * ((*ex)[num_cells - 1] + abc_b) +
+                           abc_coeff_3 * (abc_p + abc_q);
         abc_a = abc_p;
         abc_b = abc_q;
         abc_c = abc_r;
@@ -113,10 +113,10 @@ __global__ void fdtd1DFixedKernel(
       }
 
       __syncthreads();
-      if (t % GifStep == 0) {
-        auto k = t / GifStep;
-        for (Size i = 0; i < NumCells + 1; ++i) {
-          (*ex_line_monitor)[k * (NumCells + 1) + i] = (*ex)[i];
+      if (t % gif_step == 0) {
+        auto k = t / gif_step;
+        for (Size i = 0; i < num_cells + 1; ++i) {
+          (*ex_line_monitor)[k * (num_cells + 1) + i] = (*ex)[i];
         }
       }
 
@@ -129,7 +129,7 @@ __global__ void fdtd1DFixedKernel(
       }
 
       if (id == 0) {
-        printf("\rTime: %lu / %lu\n", t + 1, TimeSteps);
+        printf("\rTime: %lu / %lu\n", t + 1, time_steps);
       }
 
       __syncthreads();
@@ -138,10 +138,8 @@ __global__ void fdtd1DFixedKernel(
 };
 
 auto fdtd1D(std::size_t num_cells, std::size_t num_time_steps) -> void {
-  auto ex_hd = ArrayHD<Real, num_cells + 1>();
-  auto hy_hd = ArrayHD<Real, num_cells>();
-  ex_hd.allocateHost();
-  hy_hd.allocateHost();
+  auto ex_hd = TensorHD<Real, 1>({num_cells + 1});
+  auto hy_hd = TensorHD<Real, 1>({num_cells});
   for (auto &&i : *ex_hd.host()) {
     i = 0.0;
   }
@@ -152,14 +150,10 @@ auto fdtd1D(std::size_t num_cells, std::size_t num_time_steps) -> void {
   hy_hd.copyHostToDevice();
 
   // material parameters
-  auto eps_hd = ArrayHD<Real, num_cells + 1>();
-  auto mu_hd = ArrayHD<Real, num_cells>();
-  auto sigma_e_hd = ArrayHD<Real, num_cells + 1>();
-  auto sigma_m_hd = ArrayHD<Real, num_cells>();
-  eps_hd.allocateHost();
-  mu_hd.allocateHost();
-  sigma_e_hd.allocateHost();
-  sigma_m_hd.allocateHost();
+  auto eps_hd = TensorHD<Real, 1>({num_cells + 1});
+  auto mu_hd = TensorHD<Real, 1>({num_cells});
+  auto sigma_e_hd = TensorHD<Real, 1>({num_cells + 1});
+  auto sigma_m_hd = TensorHD<Real, 1>({num_cells});
   auto &eps = *eps_hd.host();
   auto &mu = *mu_hd.host();
   auto &sigma_e = *sigma_e_hd.host();
@@ -189,14 +183,10 @@ auto fdtd1D(std::size_t num_cells, std::size_t num_time_steps) -> void {
   }
 
   // coefficients
-  auto cexe_hd = ArrayHD<Real, num_cells + 1>();
-  auto cexhy_hd = ArrayHD<Real, num_cells + 1>();
-  auto chyh_hd = ArrayHD<Real, num_cells>();
-  auto chye_hd = ArrayHD<Real, num_cells>();
-  cexe_hd.allocateHost();
-  cexhy_hd.allocateHost();
-  chyh_hd.allocateHost();
-  chye_hd.allocateHost();
+  auto cexe_hd = TensorHD<Real, 1>({num_cells + 1});
+  auto cexhy_hd = TensorHD<Real, 1>({num_cells + 1});
+  auto chyh_hd = TensorHD<Real, 1>({num_cells});
+  auto chye_hd = TensorHD<Real, 1>({num_cells});
   auto &cexe = *cexe_hd.host();
   auto &cexhy = *cexhy_hd.host();
   auto &chyh = *chyh_hd.host();
@@ -217,8 +207,7 @@ auto fdtd1D(std::size_t num_cells, std::size_t num_time_steps) -> void {
   chye_hd.copyHostToDevice();
 
   // source
-  auto source_hd = ArrayHD<Real, num_time_steps>();
-  source_hd.allocateHost();
+  auto source_hd = TensorHD<Real, 1>({num_time_steps});
   auto &source = *source_hd.host();
 
   // initialize source
@@ -233,14 +222,11 @@ auto fdtd1D(std::size_t num_cells, std::size_t num_time_steps) -> void {
   source_hd.copyHostToDevice();
 
   // record
-  auto ex_reflect_monitor_hd = ArrayHD<Real, num_time_steps>();
-  auto ex_transmit_monitor_hd = ArrayHD<Real, num_time_steps>();
-
+  auto ex_reflect_monitor_hd = TensorHD<Real, 1>({num_time_steps});
+  auto ex_transmit_monitor_hd = TensorHD<Real, 1>({num_time_steps});
+  const auto gif_step = 3;
   auto ex_line_monitor_hd =
-      ArrayHD<Real, (num_time_steps / gif_step) * (num_cells + 1)>();
-  ex_reflect_monitor_hd.allocateHost();
-  ex_transmit_monitor_hd.allocateHost();
-  ex_line_monitor_hd.allocateHost();
+      TensorHD<Real, 1>({(num_time_steps / gif_step) * (num_cells + 1)});
   auto &ex_reflect_monitor = *ex_reflect_monitor_hd.host();
   auto &ex_transmit_monitor = *ex_transmit_monitor_hd.host();
   auto &ex_line_monitor = *ex_line_monitor_hd.host();
@@ -262,12 +248,11 @@ auto fdtd1D(std::size_t num_cells, std::size_t num_time_steps) -> void {
   const Size num_blocks = (num_cells + block_size - 1) / block_size;
   printf("Kenel launch: num_blocks: %zu, block_size: %zu\n", num_blocks,
          block_size);
-  fdtd1DFixedKernel<Real, num_time_steps, num_cells, gif_step>
-      <<<num_blocks, block_size>>>(
-          ex_hd.device(), hy_hd.device(), cexe_hd.device(), cexhy_hd.device(),
-          chyh_hd.device(), chye_hd.device(), source_hd.device(),
-          ex_reflect_monitor_hd.device(), ex_transmit_monitor_hd.device(),
-          ex_line_monitor_hd.device());
+  fdtd1DFixedKernel<<<num_blocks, block_size>>>(
+      ex_hd.device(), hy_hd.device(), cexe_hd.device(), cexhy_hd.device(),
+      chyh_hd.device(), chye_hd.device(), source_hd.device(),
+      ex_reflect_monitor_hd.device(), ex_transmit_monitor_hd.device(),
+      ex_line_monitor_hd.device(), gif_step);
   cudaDeviceSynchronize();
 
   // copy back
@@ -289,10 +274,11 @@ auto fdtd1D(std::size_t num_cells, std::size_t num_time_steps) -> void {
   std::fstream file((dir / "ex_line_monitor.dat").string(), std::ios::out);
   for (Size t = 0; t < (num_time_steps / gif_step); ++t) {
     for (Size i = 0; i < num_cells + 1; ++i) {
-      file << ex_line_monitor[t * (num_cells + 1) + i] << " ";
+      file << ex_line_monitor.at(t * (num_cells + 1) + i) << " ";
     }
     file << "\n";
   }
+
   auto output_func = [](const auto &data, const auto filename) {
     std::fstream file(filename, std::ios::out);
     for (Size i = 0; i < data.size(); ++i) {
@@ -304,7 +290,7 @@ auto fdtd1D(std::size_t num_cells, std::size_t num_time_steps) -> void {
   output_func(ex_reflect_monitor, (dir / "ex_reflect_monitor.dat").string());
   output_func(ex_transmit_monitor, (dir / "ex_transmit_monitor.dat").string());
   output_func(source, (dir / "incident_wave.dat").string());
-  auto time = Array<Real, num_time_steps>();
+  auto time = Tensor<Real, 1>({num_time_steps});
   for (Size i = 0; i < num_time_steps; ++i) {
     time[i] = i * dt;
   }
@@ -320,8 +306,6 @@ int main(int argc, char *argv[]) {
     num_cells = std::stoul(argv[1]);
     num_time_steps = std::stoul(argv[2]);
   }
-
-
 
   std::chrono::high_resolution_clock::time_point start_time =
       std::chrono::high_resolution_clock::now();
