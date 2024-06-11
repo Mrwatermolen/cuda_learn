@@ -140,6 +140,10 @@ class Tensor {
 
   FZ_CUDA_DUAL auto end() { return _data + size(); }
 
+  FZ_CUDA_DUAL auto begin() const { return _data; }
+
+  FZ_CUDA_DUAL auto end() const { return _data + size(); }
+
   FZ_CUDA_DUAL auto cbegin() { return _data; }
 
   FZ_CUDA_DUAL auto cend() { return _data + size(); }
