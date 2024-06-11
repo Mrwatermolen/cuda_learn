@@ -37,8 +37,8 @@ def show_material_space(data_dir: str):
         ax.set_title(f'Ex Line Monitor T: {frame} step')
         return line,
 
-    ani = FuncAnimation(f, update, frames=np.arange(1, tfsf_e_i.shape[0], 8), blit=True)
-    ani.save(os.path.join(data_dir, 'tfsf_e_i.gif'), writer='ffmpeg', fps=10)
+    # ani = FuncAnimation(f, update, frames=np.arange(1, tfsf_e_i.shape[0], 8), blit=True)
+    # ani.save(os.path.join(data_dir, 'tfsf_e_i.gif'), writer='ffmpeg', fps=10)
 
     ez_gif_data_dir = os.path.join(data_dir, 'ez')
     ez_files = os.listdir(ez_gif_data_dir)
